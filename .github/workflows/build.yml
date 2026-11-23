@@ -1,0 +1,62 @@
+# Tests every push and pull request. A vX.Y.Z tag also builds the two device binaries, attests them
+# (Sigstore, keyless: the files are tied to this workflow, this commit and the tag), and opens a draft
+# release with them, which is published by hand once its notes are written. Check a binary with:
+#   gh attestation verify techo5-plex-arm --repo HuskerMinion/techo5-plex --source-ref refs/tags/<tag>
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: '1.27'
+
+      - name: Vet and test
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          go vet ./...
+          go test -race ./...
+
+      - name: Build
+        run: if [ "$GITHUB_REF_TYPE" = tag ]; then VERSION="$GITHUB_REF_NAME" ./build.sh; else ./build.sh; fi
+
+      - name: Attest build provenance
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            bin/techo5-plex-arm
+            bin/techo5-plex-arm64
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: techo5-plex-${{ github.ref_name }}
+          path: |
+            bin/techo5-plex-arm
+            bin/techo5-plex-arm64
+            bin/SHA256SUMS
+
+      - name: Draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --title "techo5-plex $GITHUB_REF_NAME" \
+            --notes "Notes to come." bin/techo5-plex-arm bin/techo5-plex-arm64 bin/SHA256SUMS
