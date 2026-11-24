@@ -1,0 +1,14 @@
+{
+  "id": "techo5-plex",
+  "version": "0.2.0",
+  "command": ["techo5-plex"],
+  "args": ["-data", "{state}"],
+  "ports": [
+    {"proto": "tcp", "port": 32500, "why": "Plex apps control the player"},
+    {"proto": "tcp", "port": 32501, "why": "its link page"},
+    {"proto": "udp", "from": 32410, "to": 32414, "why": "Plex finds players"}
+  ],
+  "root": false,
+  "page": "http://{device}:32501/",
+  "memory_mb": 40
+}

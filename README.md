@@ -63,9 +63,32 @@ It does not decode anything itself and does not need the internet to cast on you
   **Screen → Video → Play videos** and **DLNA video**.
 - A **Plex Media Server** on the same network. Plex apps (Plex Web included) cast from a server on your
   network; this add-on fetches from that server and never from plex.tv's own content.
-- SSH access to the device.
+- SSH access to the device, for the install by hand (not for the setup page's).
 
-## Install
+## Install from the setup page
+
+On a TECHO5 version with the **Add-ons** card (setup page, **System → Add-ons**), install it from there:
+the card lists it once TECHO5's add-on catalog has a release of it that carries its manifest
+(`addon.json`, shipped with every release after v0.1.0). Tick the box under the warning, and press
+**Install**. TECHO5 then:
+
+- downloads the binary for your device and checks it against the catalog;
+- runs it as a user of its own, not as root, with its state in
+  `/data/techo5-linux/addons/techo5-plex/state`;
+- opens its ports (32500 and 32501 TCP, 32410 to 32414 UDP) on Wi-Fi only while it runs, and closes them
+  when it stops;
+- restarts it if it stops, and offers each new release as an update, on the card and in Home Assistant.
+
+The card also has its log, **Stop**, **Remove**, and a link to its page for linking your Plex account.
+
+**Switching from the rc.local install:** remove the lines for techo5-plex from
+`/data/techo5-linux/rc.local` (the `PLEX-IN` firewall lines and the line that starts it), reboot, and then
+install it from the card. Its state is not carried over: link your account again on its page. The old
+folder, `/data/techo5-linux/plex`, can be deleted once it works.
+
+## Install by hand (rc.local)
+
+This is the manual way, and still works as it always has.
 
 1. Download the binary for your device from the [latest release](https://github.com/HuskerMinion/techo5-plex/releases/latest).
    Each one is built and attested by this repository's CI; check one with
@@ -200,7 +223,7 @@ track.
 Go 1.26 or later:
 
 ```sh
-./build.sh            # bin/techo5-plex-arm and bin/techo5-plex-arm64, static, with SHA256SUMS
+./build.sh            # bin/techo5-plex-arm and bin/techo5-plex-arm64, static, with addon.json and SHA256SUMS
 go test ./...
 ```
 

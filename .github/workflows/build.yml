@@ -44,6 +44,7 @@ jobs:
           subject-path: |
             bin/techo5-plex-arm
             bin/techo5-plex-arm64
+            bin/addon.json
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -51,6 +52,7 @@ jobs:
           path: |
             bin/techo5-plex-arm
             bin/techo5-plex-arm64
+            bin/addon.json
             bin/SHA256SUMS
 
       - name: Draft release
@@ -59,4 +61,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" --draft --title "techo5-plex $GITHUB_REF_NAME" \
-            --notes "Notes to come." bin/techo5-plex-arm bin/techo5-plex-arm64 bin/SHA256SUMS
+            --notes "Notes to come." bin/techo5-plex-arm bin/techo5-plex-arm64 bin/addon.json bin/SHA256SUMS
