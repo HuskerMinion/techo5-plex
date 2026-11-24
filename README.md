@@ -74,7 +74,7 @@ the card lists it once TECHO5's add-on catalog has a release of it that carries 
 
 - downloads the binary for your device and checks it against the catalog;
 - runs it as a user of its own, not as root, with its state in
-  `/data/techo5-linux/addons/techo5-plex/state`;
+  `/data/techo5-addons/techo5-plex/state`;
 - opens its ports (32500 and 32501 TCP, 32410 to 32414 UDP) on Wi-Fi only while it runs, and closes them
   when it stops;
 - restarts it if it stops, and offers each new release as an update, on the card and in Home Assistant.
