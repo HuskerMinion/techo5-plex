@@ -52,6 +52,11 @@ func capProfile(w, h int) string {
 		"+add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.bitDepth&value=8&replace=true)"
 }
 
+// musicProfile is the song transcode's target: MP3 over plain HTTP, the one stream the renderer is
+// handed for music. Without a profile the server has no conversion for protocol=http and refuses
+// the start with a 400 (Transcode=4005), so every song that is not sent as it is failed.
+const musicProfile = "add-transcode-target(type=musicProfile&context=streaming&protocol=http&container=mp3&audioCodec=mp3)"
+
 // audioStream is a song: the file as it is when the renderer decodes it and it starts at the
 // beginning, else the server's MP3 transcode from offset (the renderer cannot seek, so a seek is a new
 // transcode).
@@ -71,6 +76,9 @@ func (p *Player) audioStream(req mediaRequest, it *item, offset time.Duration, s
 		"X-Plex-Session-Identifier": {session},
 		"X-Plex-Platform":           {plextv.Platform},
 		"X-Plex-Product":            {plextv.Product},
+		// As videoQuery does: the generic profile plus the one target this player takes.
+		"X-Plex-Client-Profile-Name":  {"generic"},
+		"X-Plex-Client-Profile-Extra": {musicProfile},
 	}
 	u := req.rendererServer() + "/music/:/transcode/universal/start.mp3?" + q.Encode()
 	return streamURL{uri: withToken(u, req.token), mime: "audio/mpeg", base: offset.Truncate(time.Second), transcoding: true}

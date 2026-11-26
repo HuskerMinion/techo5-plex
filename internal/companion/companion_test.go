@@ -272,6 +272,36 @@ func TestASongItCannotDecodeIsTranscoded(t *testing.T) {
 	if !strings.Contains(g.fr.Last("SetAVTransportURI").Args["CurrentURIMetaData"], "audio/mpeg") {
 		t.Error("not described as MP3")
 	}
+	checkMusicProfile(t, u.Query())
+}
+
+// A FLAC started part-way (a cast moved from another player mid-song) is the server's MP3 from that
+// second, with the same profile: the renderer cannot seek in the file.
+func TestASongStartedPartWayIsTranscoded(t *testing.T) {
+	g := newRig(t)
+	if w := g.playMedia(t, "/library/metadata/1", "&offset=61000"); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	u, _ := url.Parse(g.fr.Last("SetAVTransportURI").Args["CurrentURI"])
+	if u.Path != "/music/:/transcode/universal/start.mp3" || u.Query().Get("offset") != "61" {
+		t.Errorf("URI %v", u)
+	}
+	checkMusicProfile(t, u.Query())
+}
+
+// checkMusicProfile: without an MP3-over-HTTP target the server refuses a song's transcode with a
+// 400 (#1).
+func checkMusicProfile(t *testing.T, q url.Values) {
+	t.Helper()
+	if q.Get("protocol") != "http" || q.Get("X-Plex-Client-Profile-Name") != "generic" {
+		t.Errorf("profile name %q, protocol %q", q.Get("X-Plex-Client-Profile-Name"), q.Get("protocol"))
+	}
+	extra := q.Get("X-Plex-Client-Profile-Extra")
+	for _, want := range []string{"add-transcode-target(", "type=musicProfile", "context=streaming", "protocol=http", "container=mp3", "audioCodec=mp3"} {
+		if !strings.Contains(extra, want) {
+			t.Errorf("profile extra %q lacks %q", extra, want)
+		}
+	}
 }
 
 // A film: the server decides first (token as a header), and the renderer is handed the stream
