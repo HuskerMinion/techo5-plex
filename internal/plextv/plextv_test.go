@@ -209,3 +209,52 @@ func TestServerAccess(t *testing.T) {
 		t.Error("a player was taken for a server")
 	}
 }
+
+// Servers lists the account's servers with a connection in the house, as plain HTTP to an address,
+// the account's own first, each with its access token.
+func TestServers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/resources" || r.Header.Get("X-Plex-Token") != "account-token" {
+			http.Error(w, "no", 401)
+			return
+		}
+		io.WriteString(w, `[
+			{"name":"Friend","clientIdentifier":"friend","provides":"server","accessToken":"friend-token","owned":false,"publicAddressMatches":true,"connections":[
+				{"protocol":"https","address":"192.168.1.30","port":32400,"uri":"https://192-168-1-30.f.plex.direct:32400","local":true}]},
+			{"name":"Away","clientIdentifier":"away","provides":"server","accessToken":"away-token","owned":false,"publicAddressMatches":false,"connections":[
+				{"protocol":"https","address":"10.0.0.8","port":32400,"uri":"https://10-0-0-8.e.plex.direct:32400","local":true}]},
+			{"name":"Odd","clientIdentifier":"odd","provides":"server","accessToken":"odd-token","owned":true,"connections":[
+				{"protocol":"http","address":"203.0.113.9","port":32400,"uri":"http://203.0.113.9:32400","local":true}]},
+			{"name":"Basement","clientIdentifier":"basement","provides":"server","accessToken":"server-token","owned":true,"connections":[
+				{"protocol":"https","address":"192.168.1.10","port":32400,"uri":"https://192-168-1-10.abc.plex.direct:32400","local":true},
+				{"protocol":"http","address":"192.168.1.10","port":32400,"uri":"http://192.168.1.10:32400","local":true},
+				{"protocol":"https","address":"203.0.113.7","port":32400,"uri":"https://203-0-113-7.abc.plex.direct:32400","local":false},
+				{"protocol":"https","address":"192.168.1.99","port":8443,"uri":"https://192-168-1-99.abc.plex.direct:8443","local":true,"relay":true}]},
+			{"name":"Attic","clientIdentifier":"attic","provides":"server","accessToken":"attic-token","owned":true,"connections":[
+				{"protocol":"https","address":"192-168-1-11.def.plex.direct","uri":"https://192-168-1-11.def.plex.direct:32401","local":true}]},
+			{"name":"Away","clientIdentifier":"away","provides":"server","accessToken":"away-token","owned":true,"connections":[
+				{"protocol":"https","address":"198.51.100.4","port":32400,"local":false}]},
+			{"name":"Phone","clientIdentifier":"phone","provides":"player","accessToken":"phone-token","connections":[
+				{"protocol":"http","address":"192.168.2.50","port":32500,"local":true}]}
+		]`)
+	}))
+	defer srv.Close()
+	c := NewClient(NewIdentity("client-1", "Kitchen", "0.1.0", ""))
+	c.Resources = srv.URL + "/api/v2"
+	list, err := c.Servers(context.Background(), "account-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, s := range list {
+		got = append(got, fmt.Sprintf("%s %s %v %v", s.Machine, s.Token, s.Owned, s.Bases))
+	}
+	want := []string{
+		"basement server-token true [http://192.168.1.10:32400]",
+		"attic attic-token true [http://192.168.1.11:32401]",
+		"friend friend-token false [http://192.168.1.30:32400]",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("servers\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -302,4 +303,95 @@ func provides(list, what string) bool {
 		}
 	}
 	return false
+}
+
+// Server is a Plex Media Server the linked account can reach on the home network: its name, its
+// machine identifier, the account's access token on it, and the addresses to ask it at, as plain HTTP
+// to an address (the device's DNS often refuses plex.direct names, as rendererServer in companion
+// says).
+type Server struct {
+	Name    string
+	Machine string
+	Token   string
+	Owned   bool
+	Bases   []string // http://192.168.1.10:32400
+}
+
+// Servers is the account's servers with a connection on the home network, the account's own first.
+// Relayed and remote connections are left out: voice plays only from a server in the house.
+func (c *Client) Servers(ctx context.Context, token string) ([]Server, error) {
+	resp, err := c.do(ctx, http.MethodGet, c.Resources+"/resources?includeHttps=1", token, "application/json")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var list []struct {
+		Name             string `json:"name"`
+		ClientIdentifier string `json:"clientIdentifier"`
+		Provides         string `json:"provides"`
+		AccessToken      string `json:"accessToken"`
+		Owned            bool   `json:"owned"`
+		// PublicAddressMatches: the server is behind the same public address as this device, so its
+		// "local" connections are on this network. A server shared from another household marks its
+		// own network's addresses local too, and those are never reachable from here.
+		PublicAddressMatches bool `json:"publicAddressMatches"`
+		Connections          []struct {
+			Address string `json:"address"`
+			Port    int    `json:"port"`
+			URI     string `json:"uri"`
+			Local   bool   `json:"local"`
+			Relay   bool   `json:"relay"`
+		} `json:"connections"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, mostBody)).Decode(&list); err != nil {
+		return nil, fmt.Errorf("the account's servers were not readable: %w", err)
+	}
+	var own, shared []Server
+	for _, r := range list {
+		if !provides(r.Provides, "server") || r.AccessToken == "" || r.ClientIdentifier == "" {
+			continue
+		}
+		if !r.Owned && !r.PublicAddressMatches {
+			continue // shared from another network: its local addresses are that network's
+		}
+		s := Server{Name: r.Name, Machine: r.ClientIdentifier, Token: r.AccessToken, Owned: r.Owned}
+		seen := map[string]bool{}
+		for _, cn := range r.Connections {
+			if !cn.Local || cn.Relay {
+				continue
+			}
+			ip := net.ParseIP(cn.Address)
+			if ip == nil {
+				ip = netguard.PlexDirectIP(cn.Address)
+			}
+			port := cn.Port
+			if u, err := url.Parse(cn.URI); err == nil {
+				if ip == nil {
+					ip = netguard.PlexDirectIP(u.Hostname())
+				}
+				if port == 0 {
+					port, _ = strconv.Atoi(u.Port())
+				}
+			}
+			// Only an address on a home network: a listing that calls a public address local would
+			// otherwise send the server's token there.
+			if ip == nil || !netguard.Home(ip) || port <= 0 || port > 65535 {
+				continue
+			}
+			base := "http://" + net.JoinHostPort(ip.String(), strconv.Itoa(port))
+			if !seen[base] {
+				seen[base] = true
+				s.Bases = append(s.Bases, base)
+			}
+		}
+		if len(s.Bases) == 0 {
+			continue
+		}
+		if s.Owned {
+			own = append(own, s)
+		} else {
+			shared = append(shared, s)
+		}
+	}
+	return append(own, shared...), nil
 }
