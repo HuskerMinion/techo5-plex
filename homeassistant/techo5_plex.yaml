@@ -119,12 +119,16 @@ script:
             if s else fallback -}}
       asking: "binary_sensor.{{ device }}_plex_player_asking"
       paused: "binary_sensor.{{ device }}_plex_player_paused"
+      # The device has the add-on, with voice: its asking sensor is there.
+      plex_here: "{{ device != '' and states(asking) not in ['unknown', 'unavailable'] }}"
       # An answer goes to choose only while the add-on asks; resume goes to Plex only while Plex is
       # paused, and otherwise to whatever the device has paused.
       # "play X from the beginning on plex" and "play the office season 2 episode 4 on plex" are plays
       # too: the add-on reads the beginning and the episode's numbers from the title.
       command: >-
-        {%- if intent == 'resume' -%}
+        {%- if intent == 'resume' and not plex_here -%}
+          none
+        {%- elif intent == 'resume' -%}
           {{- 'choose' if is_state(asking, 'on') else ('resume' if is_state(paused, 'on') else 'none') -}}
         {%- elif intent == 'start' -%}
           {{- 'choose' if is_state(asking, 'on') else 'restart' -}}
@@ -150,8 +154,9 @@ script:
           {{- {'title': title} -}}
         {%- endif -%}
     sequence:
-      # No device with the add-on heard it: a play_if_known is left to music, anything else says so.
-      - if: "{{ device == '' or states(asking) in ['unknown', 'unavailable'] }}"
+      # No device with the add-on heard it: a play_if_known is left to music, a resume goes to whatever
+      # the device has paused (below), anything else says so.
+      - if: "{{ not plex_here and command != 'none' }}"
         then:
           - variables:
               result:
@@ -167,7 +172,7 @@ script:
                 {{ device_entities(heard) | select('match', 'media_player[.]')
                    | select('is_state', 'paused') | list }}
               result:
-                text: "{{ 'Resuming.' if held | count > 0 else 'Nothing from Plex is waiting.' }}"
+                text: "{{ 'Resuming.' if held | count > 0 else ('Nothing from Plex is waiting.' if plex_here else 'Nothing is paused.') }}"
           - if: "{{ held | count > 0 }}"
             then:
               - action: media_player.media_play
