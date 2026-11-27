@@ -1,5 +1,7 @@
 // techo5-plex makes a TECHO5 device a Plex player: casting apps find it on the home network (GDM) or
-// through the linked Plex account, and what they cast is played by the device's own DLNA renderer.
+// through the linked Plex account, and what they cast is played by the device's own DLNA renderer. On
+// a TECHO5 with the add-on API, it also takes voice commands from Home Assistant (internal/voice) and
+// plays what they ask for on the device itself.
 //
 // It is an add-on, run from userdata at boot (see README.md). It is based on kevin909867's plexcast,
 // TECHO5 PR #691.
@@ -30,10 +32,12 @@ import (
 	"github.com/HuskerMinion/techo5-plex/internal/pubsub"
 	"github.com/HuskerMinion/techo5-plex/internal/redact"
 	"github.com/HuskerMinion/techo5-plex/internal/state"
+	"github.com/HuskerMinion/techo5-plex/internal/voice"
+	"github.com/HuskerMinion/techo5/echod/pkg/addonapi"
 )
 
 // version is stamped by build.sh.
-var version = "0.1.0-dev"
+var version = "0.3.0-dev"
 
 func main() {
 	var (
@@ -165,6 +169,14 @@ func main() {
 				slog.Error("plex: the link page stopped", "err", err)
 			}
 		})
+	}
+	// Voice: only when TECHO5 started the add-on with its API (addon.json's "api": 1, on a TECHO5 that
+	// has it). Without, the add-on is the player it always was.
+	if os.Getenv(addonapi.EnvSocket) != "" {
+		media := &voice.Media{}
+		v := voice.New(player, media, func() string { return store.Get().Token }, account.Servers, netguard.Client(30*time.Second))
+		run(func() { v.Run(ctx) })
+		run(func() { v.Serve(ctx, "", media) })
 	}
 	run(func() { registerLoop(ctx, linker, uris) })
 	run(func() {

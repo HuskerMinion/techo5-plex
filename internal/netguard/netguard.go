@@ -79,6 +79,11 @@ func Client(timeout time.Duration) *http.Client {
 			if len(via) >= 3 {
 				return errors.New("too many redirects")
 			}
+			// A token goes in a header, and Go carries custom headers on to wherever a redirect
+			// leads: a redirect may not leave the host it started on.
+			if req.URL.Host != via[0].URL.Host {
+				return errors.New("a redirect to another host")
+			}
 			return nil
 		},
 	}

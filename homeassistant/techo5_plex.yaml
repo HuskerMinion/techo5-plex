@@ -1,0 +1,276 @@
+# techo5-plex: Plex by voice on TECHO5 devices. The whole Home Assistant side, in one package.
+#
+# Install:
+#   1. Copy this file to config/packages/techo5_plex.yaml. If configuration.yaml has no packages yet,
+#      add to it:
+#        homeassistant:
+#          packages: !include_dir_named packages
+#   2. Restart Home Assistant.
+#
+# It works on every device with the add-on: what you say plays on the device you said it to. Typed in
+# Home Assistant's Assist instead, it goes to the device named in fallback: below, if you set one.
+#
+# Then say "play Project Hail Mary on plex" (or "from plex"), "play the office season 2 episode 4 on
+# plex", "pause plex", "resume", "stop plex", "next episode", "start over". Something left part way is
+# asked about: answer "resume" or "from the beginning".
+#
+# An automation of your own that catches every "play {query}" (for music, say) also runs for "play ...
+# on plex": both run, and the first to answer is heard. Give it a condition that leaves Plex's
+# sentences alone:
+#   conditions:
+#     - condition: template
+#       value_template: "{{ not ((trigger.sentence | lower).rstrip(' .!?') | regex_search(' (on|from|in) plex$')) }}"
+#
+# And so that "play bluey" works without "on plex": as its first action, have it ask Plex whether what
+# was said is a title in your library. If it is, Plex plays it and answers; if not, the answer is empty
+# and your automation goes on as before:
+#   actions:
+#     - action: script.techo5_plex
+#       data:
+#         intent: play_if_known
+#         title: "{{ trigger.slots.query }}"
+#         device_id: "{{ trigger.device_id }}"
+#       response_variable: plex
+#     - if: "{{ plex.text | default('') != '' }}"
+#       then:
+#         - set_conversation_response: "{{ plex.text }}"
+#         - stop: ""
+#     # ... your music actions, as they were
+#
+# And so that "pause" pauses Plex when Plex is what plays: in an automation of your own that answers
+# "pause", call the script the same way first with intent: pause_if_plex (no title). Plex answers nothing
+# when it has nothing playing, and your automation goes on.
+
+automation:
+  - id: techo5_plex_voice
+    alias: Plex by voice
+    mode: parallel
+    # Home Assistant runs every automation whose sentence matches what was said, all at once, and says
+    # the first answer. So each sentence here matches in one trigger only: every play is one trigger,
+    # told apart by what it caught, and none of the others start with "play ... on plex". Speech often
+    # starts with a filler word ("and play ..."), which these allow.
+    triggers:
+      - trigger: conversation
+        id: play
+        command:
+          - "[and|um|uh|so|ok|okay] play {title} (on|from|in) plex"
+          - "[and|um|uh|so|ok|okay] play {title} season {season} episode {episode} (on|from|in) plex"
+      - trigger: conversation
+        id: pause
+        command: "[and|um|uh|so|ok|okay] pause plex"
+      - trigger: conversation
+        id: stop
+        command: "[and|um|uh|so|ok|okay] stop plex"
+      - trigger: conversation
+        id: next_episode
+        command: "[and|um|uh|so|ok|okay] next episode [(on|from|in) plex]"
+      # The answers to "Resume, or start from the beginning?", and resume and start over themselves.
+      - trigger: conversation
+        id: resume
+        command:
+          - "[and|um|uh] (resume|continue|keep going|where i left off|play|unpause) [please]"
+          - "[and] (resume|continue|unpause|play) [the] (plex|movie|show|episode|video)"
+      - trigger: conversation
+        id: start
+        command:
+          - "[and|um|uh] ([from] the (beginning|start)|start [it] over|restart) [please]"
+          - "start [it] (over|from the beginning)"
+    actions:
+      - action: script.techo5_plex
+        data:
+          intent: "{{ trigger.id }}"
+          title: "{{ trigger.slots.title | default('') }}"
+          season: "{{ trigger.slots.season | default('') }}"
+          episode: "{{ trigger.slots.episode | default('') }}"
+          device_id: "{{ trigger.device_id | default('') }}"
+        response_variable: answer
+      - set_conversation_response: "{{ answer.text | default('') }}"
+
+script:
+  techo5_plex:
+    alias: Plex by voice, on the device that heard it
+    mode: parallel
+    fields:
+      intent:
+        description: "play, play_if_known, pause, pause_if_plex, stop, next_episode, resume or start"
+      title:
+        description: What to play
+      season:
+        description: A season, for an episode
+      episode:
+        description: An episode
+      device_id:
+        description: The device that heard it (trigger.device_id)
+    variables:
+      fallback: "" # the device used when nothing heard it (typed in Assist): its name, like kitchen
+      # The device: the one that heard it, else the one whose voice satellite is answering now, else
+      # the fallback. Its name comes from the add-on's asking sensor on that device.
+      heard: >-
+        {%- set d = device_id | default('') -%}
+        {%- if not d -%}
+          {%- set d = states.assist_satellite | selectattr('state', 'eq', 'processing')
+                | map(attribute='entity_id') | map('device_id') | select | first | default('') -%}
+        {%- endif -%}
+        {{- d -}}
+      device: >-
+        {%- set s = (device_entities(heard) | select('match', 'binary_sensor[.].+_plex_player_asking$')
+              | first | default('')) if heard else '' -%}
+        {{- s | regex_replace('^binary_sensor[.]', '') | regex_replace('_plex_player_asking$', '')
+            if s else fallback -}}
+      asking: "binary_sensor.{{ device }}_plex_player_asking"
+      paused: "binary_sensor.{{ device }}_plex_player_paused"
+      # An answer goes to choose only while the add-on asks; resume goes to Plex only while Plex is
+      # paused, and otherwise to whatever the device has paused.
+      # "play X from the beginning on plex" and "play the office season 2 episode 4 on plex" are plays
+      # too: the add-on reads the beginning and the episode's numbers from the title.
+      command: >-
+        {%- if intent == 'resume' -%}
+          {{- 'choose' if is_state(asking, 'on') else ('resume' if is_state(paused, 'on') else 'none') -}}
+        {%- elif intent == 'start' -%}
+          {{- 'choose' if is_state(asking, 'on') else 'restart' -}}
+        {%- elif intent in ['play', 'play_if_known'] and (season | default('') | string) != '' -%}
+          play_episode
+        {%- elif intent == 'play_if_known' -%}
+          play
+        {%- elif intent == 'pause_if_plex' -%}
+          pause
+        {%- else -%}
+          {{- intent -}}
+        {%- endif -%}
+      # The arguments as an object; turned into the JSON text addon_command takes only in the call,
+      # since a variable that looks like JSON is read back as an object.
+      payload: >-
+        {%- if command == 'choose' -%}
+          {{- {'answer': 'resume' if intent == 'resume' else 'beginning'} -}}
+        {%- elif command == 'play_episode' -%}
+          {{- {'title': title, 'season': season | string, 'episode': episode | string} -}}
+        {%- elif command == 'play' and intent == 'play_if_known' -%}
+          {{- {'title': title, 'if_known': true} -}}
+        {%- elif command == 'play' -%}
+          {{- {'title': title} -}}
+        {%- endif -%}
+    sequence:
+      # No device with the add-on heard it: a play_if_known is left to music, anything else says so.
+      - if: "{{ device == '' or states(asking) in ['unknown', 'unavailable'] }}"
+        then:
+          - variables:
+              result:
+                text: "{{ '' if intent in ['play_if_known', 'pause_if_plex'] else 'Plex is not on this device.' }}"
+          - stop: ""
+            response_variable: result
+      # Nothing of Plex's waits: resume is the device's own then, and resumes whatever it has paused
+      # (music, the radio), so the word still works for everything else.
+      - if: "{{ command == 'none' }}"
+        then:
+          - variables:
+              held: >-
+                {{ device_entities(heard) | select('match', 'media_player[.]')
+                   | select('is_state', 'paused') | list }}
+              result:
+                text: "{{ 'Resuming.' if held | count > 0 else 'Nothing from Plex is waiting.' }}"
+          - if: "{{ held | count > 0 }}"
+            then:
+              - action: media_player.media_play
+                target:
+                  entity_id: "{{ held }}"
+          - stop: ""
+            response_variable: result
+      - action: "esphome.{{ device }}_addon_command"
+        data:
+          addon: techo5-plex
+          command: "{{ command }}"
+          args: "{{ payload | to_json if payload else '' }}"
+        response_variable: result
+      # pause_if_plex: Plex had nothing playing, so the pause is someone else's (music, the radio).
+      - if: "{{ intent == 'pause_if_plex' and result.text == 'Nothing from Plex is playing.' }}"
+        then:
+          - variables:
+              result:
+                text: ""
+          - stop: ""
+            response_variable: result
+      # A question ("... is 1 hour in. Resume, or start from the beginning?"): the reply says what it
+      # is, and then the device asks the question itself and listens for the answer without its wake
+      # word (Home Assistant would not listen again after a reply).
+      - if: "{{ (result.text | default('')).endswith('?') }}"
+        then:
+          - variables:
+              said: "{{ result.text }}"
+              cut: "{{ said.rfind('. ') }}"
+              result:
+                text: "{{ said[:cut + 1] if cut > 0 else 'One moment.' }}"
+          - action: script.turn_on
+            target:
+              entity_id: script.techo5_plex_answer
+            data:
+              variables:
+                heard: "{{ heard }}"
+                device: "{{ device }}"
+                question: "{{ said[cut + 2:] if cut > 0 else said }}"
+                reply: "{{ said[:cut + 1] if cut > 0 else 'One moment.' }}"
+      - stop: ""
+        response_variable: result
+
+  # Listens for the answer to the add-on's question on the device that asked, once it has said it, and
+  # passes the answer on. Started by techo5_plex; not called by itself.
+  techo5_plex_answer:
+    alias: Plex by voice, listening for the answer
+    mode: parallel
+    variables:
+      satellite: >-
+        {{ device_entities(heard) | select('match', 'assist_satellite[.]') | first | default('') }}
+    sequence:
+      - condition: "{{ satellite != '' }}"
+      # The reply is still being said, and the satellite shows idle before the device has finished
+      # saying it: give it the time a reply that long takes (about 12 letters a second), so the
+      # question does not cut it off.
+      - delay:
+          milliseconds: "{{ (1500 + (reply | default('') | length) * 1000 / 12) | int }}"
+      - wait_template: "{{ is_state(satellite, 'idle') }}"
+        timeout: 20
+        continue_on_error: true
+      - condition: "{{ is_state(satellite, 'idle') }}"
+      - action: assist_satellite.ask_question
+        target:
+          entity_id: "{{ satellite }}"
+        data:
+          question: "{{ question }}"
+          preannounce: false
+          answers:
+            # Said loosely, and heard loosely: "start from the beginning", "in the beginning", "yes".
+            - id: resume
+              sentences:
+                # A filler word alone ("okay", which speech-to-text also makes of near silence) is no answer.
+                - "[and|um|uh|ok|okay] (yes|yeah|yep|sure) [please]"
+                - "[and|um|uh|ok|okay] [yes|yeah|yep|sure] (resume|continue|keep going|go on|play) [it|watching|playing] [(from|at) where i (left|stopped) [off]] [please]"
+                - "[and|um|uh] [(from|at)] where i (left|stopped) [off]"
+                - "[and|um|uh] (resume|continue|keep going|go on|play) [it] [please]"
+            - id: beginning
+              sentences:
+                - "[and|um|uh|no|ok|okay] [(start|play|watch) [it]] [(over|again)] [from|at|in] [the] (beginning|start) [please]"
+                - "[and|um|uh|no|ok|okay] (start|play) [it] (over|again) [please]"
+                - "[and|um|uh] (restart|start over|from scratch|no) [please]"
+            # Stop while it waits: nothing starts, and the question is dropped.
+            - id: stop
+              sentences:
+                - "[and|um|uh|no] (stop|cancel|never mind|forget it|nothing) [plex|it|that] [please]"
+                # A TECHO5 device takes "stop" itself, as its stop word: what reaches Home Assistant of
+                # "stop plex" is "plex".
+                - "[and|um|uh] plex"
+        response_variable: heard_answer
+        continue_on_error: true
+      - condition: "{{ heard_answer is defined and heard_answer.id is not none and heard_answer.id != '' }}"
+      - action: "esphome.{{ device }}_addon_command"
+        data:
+          addon: techo5-plex
+          command: "{{ 'stop' if heard_answer.id == 'stop' else 'choose' }}"
+          args: "{{ '' if heard_answer.id == 'stop' else ({'answer': heard_answer.id} | to_json) }}"
+        response_variable: chosen
+        continue_on_error: true
+      - condition: "{{ chosen is defined and (chosen.text | default('')) != '' }}"
+      - action: assist_satellite.announce
+        target:
+          entity_id: "{{ satellite }}"
+        data:
+          message: "{{ chosen.text }}"
+          preannounce: false

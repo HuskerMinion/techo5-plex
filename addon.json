@@ -1,6 +1,6 @@
 {
   "id": "techo5-plex",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "command": ["techo5-plex"],
   "args": ["-data", "{state}"],
   "ports": [
@@ -10,5 +10,30 @@
   ],
   "root": false,
   "page": "http://{device}:32501/",
-  "memory_mb": 40
+  "memory_mb": 40,
+  "api": 1,
+  "capabilities": ["commands", "media", "entities"],
+  "commands": [
+    {"name": "play", "args": {
+      "title": {"type": "string", "max": 200, "required": true},
+      "from_start": {"type": "bool"},
+      "if_known": {"type": "bool"}
+    }},
+    {"name": "play_episode", "args": {
+      "title": {"type": "string", "max": 200, "required": true},
+      "season": {"type": "string", "max": 16, "required": true},
+      "episode": {"type": "string", "max": 16, "required": true},
+      "from_start": {"type": "bool"}
+    }},
+    {"name": "pause"},
+    {"name": "resume"},
+    {"name": "stop"},
+    {"name": "next_episode"},
+    {"name": "restart"},
+    {"name": "choose", "args": {"answer": {"type": "string", "max": 200, "required": true}}}
+  ],
+  "entities": [
+    {"domain": "binary_sensor", "id": "asking", "name": "Asking", "icon": "mdi:comment-question-outline"},
+    {"domain": "binary_sensor", "id": "paused", "name": "Paused", "icon": "mdi:pause-circle-outline"}
+  ]
 }

@@ -3,7 +3,9 @@
 A Plex player add-on for [TECHO5](https://github.com/HuskerMinion/techo5). It makes an Echo Show running
 TECHO5 show up as a player in Plex apps, so you can cast music and video from Plex to it. What you cast is
 played by the device's own DLNA renderer, so songs come out of the speaker with Now Playing and films play
-full screen, the same way as any other DLNA cast.
+full screen, the same way as any other DLNA cast. On a TECHO5 with the add-on API, it also takes voice
+commands from Home Assistant: "play The Office on Plex" plays the next episode on the device itself (see
+**Voice**).
 
 This is an add-on, not part of TECHO5: it runs from the device's storage at boot, outlasts updates, and is
 only on devices whose owners install it.
@@ -15,6 +17,12 @@ The Plex side of this add-on comes from **kevin909867**'s `plexcast`, proposed f
 Companion control server, the transcode request and the timelines. It has been moved out of the TECHO5
 daemon into this standalone program, and changed to drive the device's DLNA renderer instead of
 decoding media itself. Thank you, Kevin.
+
+Playing by voice is **stoney66**'s method (Stoney, on the TECHO5 Discord): he voiced Plex on his
+devices through Home Assistant scripts generated for each show in his library, and this add-on now does
+that itself. Casting from Plex apps is HuskerMinion's and kevin909867's; playing by voice is Stoney's. The way titles are matched comes from what he learned doing it: a leading "the" comes and
+goes in speech, and a title with its year in it, like "Doctor Who (2005)", never matched what anybody
+says. Thank you, Stoney.
 
 ## What it does
 
@@ -169,6 +177,126 @@ for a new stream that starts at the new position, which takes a few seconds. Cha
 subtitle track during a film works the same way: the film restarts at the same second with the new
 track.
 
+## Voice
+
+On a TECHO5 that has the add-on API (`api1`), installed from the setup page, the add-on also takes
+commands from Home Assistant, and plays what they ask for on the device itself, full screen,
+with TECHO5's own video player. No Plex app is involved, and DLNA does not have to be on; **Screen →
+Video → Play videos** does. On install, the consent screen says it "Adds commands Home Assistant and
+voice can call: *play, play_episode, pause, resume, stop, next_episode, restart, choose*", "Plays video
+and audio from the network on this device" and "Adds entities to Home Assistant: *binary_sensor.asking,
+binary_sensor.paused*". Voice needs a linked account (**Link your Plex account**). Installed by hand (rc.local), the add-on has
+no API to take commands from, and is the player it always was.
+
+| Command | Arguments | Does |
+|---|---|---|
+| `play` | `title`, `from_start`, `if_known` | A show goes on with the episode you are up to: one started and not finished, else the first not watched after the last one watched, else the first episode. A film plays. One left part way is not started: the add-on asks whether to resume it or start from the beginning (see below). With `from_start` true, or a title that ends in "from the beginning" or "from the start", it starts at the beginning without asking. With `if_known` true it plays only a title the library has exactly, and answers nothing (`""`) for anything else, at once, without reading the library while Home Assistant waits. |
+| `play_episode` | `title`, `season`, `episode`, `from_start` | That episode of the show, asking as `play` does when it was left part way. The numbers may be digits or words ("4", "four"). |
+| `choose` | `answer` | The answer to that question, as said: "resume", "continue", "keep going", "where I left off" or "yes" resume it; "from the beginning", "the start", "start over", "restart" or "no" start it from 0:00. "And", "um", "uh", "please" and "the" around it do not matter. With no question waiting: "There's nothing to choose." |
+| `pause`, `resume`, `stop` | | What voice started. Stop keeps its place on the server. `resume` with a question waiting answers it: it resumes the item asked about. `stop` with a question waiting drops it. |
+| `next_episode` | | The episode after the one playing. |
+| `restart` | | What voice played last, playing or stopped, from its beginning. |
+
+Each command answers with a short sentence for Home Assistant to say: "Playing The Office, season 2
+episode 4.", "Resuming Project Hail Mary at 1 hour 10 minutes.", "I couldn't find Zardoz in your Plex library.", "Nothing from Plex
+is playing." It answers so even when it could not do what was asked, so that a voice command always says
+something; the action fails only when the add-on is not running. A film that takes the server more than
+about three seconds to start is answered "Starting ... from Plex." and starts a moment later.
+
+**Resume, or start over?** Asked for something left part way, the add-on answers with a question and
+plays nothing yet: "Project Hail Mary is 1 hour 10 minutes in. Resume, or start from the beginning?"
+The package says the first part as the reply; then the device asks the question itself
+(`assist_satellite.ask_question`, in the package's `techo5_plex_answer` script) and listens for the
+answer without its wake word: "resume", "yes", "keep going", or "from the beginning", "start over",
+"no", or "stop" / "never mind" to start nothing. A filler word on its own ("okay", which speech-to-text
+also makes of near silence) is no answer. The question waits 30 seconds, so "resume" said
+later, with the wake word, still answers it. While it waits, the add-on's `asking` sensor is on, and the package sends an
+answer to `choose` only then. Its
+`paused` sensor is on while what voice plays is paused, so a bare "resume" goes to Plex only when Plex
+is what is paused; otherwise it resumes whatever the device has paused, music or the radio. "Stop plex"
+while the question waits drops it.
+
+**How titles are matched.** Against every film and show in the video sections of your servers on the
+home network (the account's own first, then shared ones), read when the account is linked, every hour,
+and again whenever a title is not found in a list more than two minutes old, so something just added is
+found. Upper and lower case, punctuation, accents and a leading "the" do not matter, numbers may be
+words ("rocky two", "oceans eleven"), a year in brackets at the end of a title is ignored ("Doctor Who
+(2005)" is "doctor who"), and near misses of speech to text still match ("the ofice"). When two have the
+same title, say the year to pick one ("dune 1984"); without it the newest plays, and the answer says the
+year: "Playing Dune (2021)." A film and a show of the same title and year are told apart in the answer
+as "the movie" or "the show".
+
+**The stream** is the one a cast gets: the server is asked for H.264 no larger than `-video-size`
+(1280x720), copying what the device decodes and converting the rest, from the place it starts at. The
+server is told what the device says of it: playing, paused, and where it is every ten seconds while it
+plays. When it stops, the server is told where: at its end when it played to it, which marks it watched;
+where it was when it was stopped on the device, replaced or failed, and the server marks it watched only
+if that was near its end, as it does for any player. So "Continue Watching" and the next episode stay
+right. The add-on asks the device again after it reconnects, so an end it missed meanwhile is reported
+too.
+
+### In Home Assistant
+
+The add-on cannot hear: speech is Home Assistant's to recognize, and it sends the add-on the command.
+So one file on the Home Assistant side says which sentences mean which command:
+[`homeassistant/techo5_plex.yaml`](homeassistant/techo5_plex.yaml). No script per show, and nothing else
+to write.
+
+1. Copy it to `config/packages/techo5_plex.yaml`. If `configuration.yaml` has no packages yet, add:
+
+   ```yaml
+   homeassistant:
+     packages: !include_dir_named packages
+   ```
+
+2. Restart Home Assistant.
+
+It works on every device with the add-on, and plays on the device you spoke to, found the way Stoney
+does it: the device that heard the sentence, else the one whose voice satellite is answering. Typed in
+Assist instead, it uses the device named in `fallback:` in the file, if you set one.
+
+It understands "play {title} on plex" ("from plex" and "in plex" too; also with "from the beginning",
+or "season {n} episode {n}", before "on plex"), "pause plex", "stop plex", "next episode", "resume"
+and "start over", and the answers to the add-on's question. A filler word first ("and play ...", "um",
+"so", "okay") is fine. An answer goes to `choose` only while the `asking` sensor is on. "Resume" goes
+to Plex while Plex is paused, and otherwise resumes whatever the device has paused, or says "Nothing
+from Plex is waiting." "Start over" with no question waiting restarts what Plex played last.
+
+Home Assistant runs every sentence-trigger automation that matches what was said, at the same time,
+and says the first answer. If you have an automation of your own that catches every "play {query}",
+it runs for "play ... on plex" too: give it the condition shown at the top of the file, so it leaves
+Plex's sentences to this one.
+
+**Titles without "on plex".** Stoney's way is "play bluey", nothing more. With an automation of your
+own that catches every "play {query}", add the step shown at the top of the file as its first action:
+it calls `play` with `if_known`, which plays the title only if it is a film or show in your library,
+matched exactly once normalized ("fifty first dates" is 50 First Dates), and otherwise answers nothing
+at once, so your automation goes on to music. A film with the same name as a song goes to Plex; "...
+on spotify" or naming a speaker keeps it for music if your automation handles those first.
+
+Home Assistant names the add-on's entities after its name in the catalog, Plex Player:
+`binary_sensor.kitchen_plex_player_asking`, `binary_sensor.kitchen_plex_player_paused`, and a button
+for each command without arguments (`button.kitchen_plex_player_pause` and so on), for a dashboard.
+The commands can also be called from any script or automation with the `addon_command` action (see
+[actions.md](https://github.com/HuskerMinion/techo5/blob/main/docs/actions.md)): `title`, `season`,
+`episode` and `answer` are strings, `from_start` is `true` or `false`.
+
+### When titles are misheard
+
+Speech-to-text hears what it expects: "play chuck" can come back as "play check", which is no title,
+so it goes to music. If you use Plex by voice a lot and run wyoming-faster-whisper, its
+`--initial-prompt` can list the titles your household says most (Whisper takes about 220 tokens,
+some 40 to 60 titles, not a whole library). It applies to everything said to every device, and
+words in the prompt can turn up when Whisper hears near silence, so keep the list short and try a
+few ordinary commands before and after.
+
+### What voice keeps and writes
+
+The library, the server's transient tokens and what is playing are kept in memory only. A command writes
+nothing to the flash: `state.json` is written only when the account is linked or unlinked, and a command
+logs only at debug level (an add-on's log is a file on the device's storage), so with `-debug` off the
+add-on's writes for voice come to a line in its log each time it connects to TECHO5, about none a day.
+
 ## Known limits
 
 - **Plex Web on app.plex.tv: the progress bar and clock do not move.** Plex Web reaches the player
@@ -180,6 +308,12 @@ track.
   Error" and stops the film. This is a long-standing Plex Web bug that happens with every player it
   casts to, not only this one. To choose audio or subtitles, do it on the film's page before you cast,
   or change them during the film from a Plex phone app used as a remote.
+- **The device's name and its ESPHome name have to match.** The package finds a device's add-on by its
+  `binary_sensor.<name>_plex_player_asking` entity and calls `esphome.<name>_addon_command`: the first
+  follows the device's name in Home Assistant, the second its ESPHome name. They match unless the
+  device or that entity was renamed; if they don't, set `fallback:` in the package to the ESPHome name.
+- **One command at a time.** A play that takes long (a large library read again because a title was
+  not found) holds the next command, a pause say, until it is done, for at most 45 seconds.
 - **Changing tracks needs a linked account.** The server keeps a film's chosen tracks per file, and
   only takes a change from the account's own token, not from the one a casting app passes. Without a
   linked account, tracks chosen before casting still work.
@@ -212,6 +346,12 @@ track.
 - To record a track change, the add-on asks plex.tv for the linked account's own token for that server,
   and sends it only to an address the account lists for that server, so a controller on the network
   cannot have it sent anywhere else.
+- Voice fetches the library with the account's access token for each server, as a header. For the
+  stream address handed to the device's player, it asks the server for a transient token
+  (`/security/token`, which the server forgets after two days or a restart), so the account's own token
+  never leaves the add-on. That address is the only thing with a token in it sent to TECHO5, and TECHO5
+  never logs media addresses. Voice plays only from the account's servers, at their home-network
+  addresses.
 - The status page's buttons only work from the page itself.
 - Films play only from a Plex server the linked account lists, at an address the account lists for it.
   TECHO5 plays a film that a program on the device itself hands its renderer without asking on the
@@ -220,7 +360,7 @@ track.
 
 ## Build
 
-Go 1.26 or later:
+Go 1.27 or later (the add-on API's client is TECHO5's own `echod/pkg/addonapi`):
 
 ```sh
 ./build.sh            # bin/techo5-plex-arm and bin/techo5-plex-arm64, static, with addon.json and SHA256SUMS
