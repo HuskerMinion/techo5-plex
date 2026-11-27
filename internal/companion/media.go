@@ -82,6 +82,14 @@ type item struct {
 	part      part
 	video     bool
 	queue     string // the play queue the controller sent, /playQueues/12?own=1
+
+	// What voice needs of a film or an episode (local.go): its year, where it was left, whether it
+	// was watched, and for an episode its show and place in it.
+	year            int
+	viewOffset      time.Duration
+	watched         bool
+	show, showKey   string // the show's title and ratingKey
+	season, episode int
 }
 
 type part struct {
@@ -162,17 +170,25 @@ type containerXML struct {
 }
 
 type mediaXML struct {
-	PlayQueueItemID  string `xml:"playQueueItemID,attr"` // in a play queue only
-	RatingKey        string `xml:"ratingKey,attr"`
-	Key              string `xml:"key,attr"`
-	Type             string `xml:"type,attr"`
-	Title            string `xml:"title,attr"`
-	GrandparentTitle string `xml:"grandparentTitle,attr"`
-	ParentTitle      string `xml:"parentTitle,attr"`
-	Thumb            string `xml:"thumb,attr"`
-	ParentThumb      string `xml:"parentThumb,attr"`
-	Duration         int64  `xml:"duration,attr"`
-	Media            []struct {
+	PlayQueueItemID string `xml:"playQueueItemID,attr"` // in a play queue only
+	RatingKey       string `xml:"ratingKey,attr"`
+	// For voice (local.go): the year, the place it was left at and how often watched, and an
+	// episode's show and its numbers.
+	Year                 int    `xml:"year,attr"`
+	ViewOffset           int64  `xml:"viewOffset,attr"`
+	ViewCount            int    `xml:"viewCount,attr"`
+	GrandparentRatingKey string `xml:"grandparentRatingKey,attr"`
+	ParentIndex          int    `xml:"parentIndex,attr"`
+	Index                int    `xml:"index,attr"`
+	Key                  string `xml:"key,attr"`
+	Type                 string `xml:"type,attr"`
+	Title                string `xml:"title,attr"`
+	GrandparentTitle     string `xml:"grandparentTitle,attr"`
+	ParentTitle          string `xml:"parentTitle,attr"`
+	Thumb                string `xml:"thumb,attr"`
+	ParentThumb          string `xml:"parentThumb,attr"`
+	Duration             int64  `xml:"duration,attr"`
+	Media                []struct {
 		Duration   int64  `xml:"duration,attr"`
 		Container  string `xml:"container,attr"`
 		VideoCodec string `xml:"videoCodec,attr"`
@@ -248,6 +264,13 @@ func fromXML(m mediaXML, video bool) *item {
 		thumb:     or(m.Thumb, m.ParentThumb),
 		dur:       time.Duration(m.Duration) * time.Millisecond,
 		video:     video,
+
+		year:       m.Year,
+		viewOffset: time.Duration(m.ViewOffset) * time.Millisecond,
+		watched:    m.ViewCount > 0,
+	}
+	if m.Type == "episode" {
+		it.show, it.showKey, it.season, it.episode = m.GrandparentTitle, m.GrandparentRatingKey, m.ParentIndex, m.Index
 	}
 	if it.artist == it.album {
 		it.artist = m.GrandparentTitle

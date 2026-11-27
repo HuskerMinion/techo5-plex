@@ -105,6 +105,11 @@ func (p *Player) report() {
 	if st == stateError {
 		st = stateStopped
 	}
+	p.sendReport(req, it, session, st, pos)
+}
+
+// sendReport is one report to the item's server: the item, its state and where it is.
+func (p *Player) sendReport(req mediaRequest, it *item, session, st string, pos time.Duration) {
 	q := url.Values{
 		"key":        {it.key},
 		"ratingKey":  {it.ratingKey},
